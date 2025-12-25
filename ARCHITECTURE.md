@@ -397,4 +397,3 @@
 - ✅ Production readiness
 - ✅ Clean separation of concerns
 
-*See [PROJECT_SUMMARY.md](PROJECT_SUMMARY.md) for more details.*
