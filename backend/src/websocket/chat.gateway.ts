@@ -20,6 +20,12 @@ import {
   SendMessagePayload,
   MessageReceivedPayload,
   RedisMessagePayload,
+  TypingStartPayload,
+  TypingStopPayload,
+  MessageReadPayload,
+  UserTypingPayload,
+  MessageDeliveredPayload,
+  MessageReadStatusPayload,
 } from './events';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -363,5 +369,332 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
   @SubscribeMessage('ping')
   handlePing(@ConnectedSocket() client: AuthenticatedSocket) {
     return { event: 'pong', data: { timestamp: Date.now() } };
+  }
+
+  // ============================================
+  // Phase 4: Typing Indicators + Receipts
+  // ============================================
+
+  /**
+   * Event: typing_start
+   * User started typing in a conversation
+   * 
+   * Flow:
+   * 1. Validate authentication
+   * 2. Validate conversation membership
+   * 3. Broadcast to conversation room (except sender)
+   * 
+   * Important:
+   * - Ephemeral: NO DATABASE WRITES
+   * - Room-scoped: Only conversation members receive
+   * - Throttled: Client should throttle (e.g., 500ms)
+   */
+  @SubscribeMessage('typing_start')
+  async handleTypingStart(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() payload: TypingStartPayload,
+  ) {
+    try {
+      if (!client.userId) {
+        throw new UnauthorizedException('Not authenticated');
+      }
+
+      const { conversationId } = payload;
+
+      if (!conversationId) {
+        throw new BadRequestException('conversationId is required');
+      }
+
+      // Validate user is a member of this conversation
+      const isMember = await this.conversationsService.validateMembership(
+        conversationId,
+        client.userId,
+      );
+
+      if (!isMember) {
+        throw new ForbiddenException('You are not a member of this conversation');
+      }
+
+      // Get user name for display
+      const user = await this.prismaService.user.findUnique({
+        where: { id: client.userId },
+        select: { name: true },
+      });
+
+      // Broadcast to room (except sender)
+      const roomName = `conversation:${conversationId}`;
+      const typingPayload: UserTypingPayload = {
+        conversationId,
+        userId: client.userId,
+        userName: user?.name || 'Unknown',
+      };
+
+      client.to(roomName).emit('user_typing', typingPayload);
+
+      console.log(`⌨️  User ${client.userId} typing in ${conversationId}`);
+
+      return {
+        success: true,
+      };
+    } catch (error) {
+      console.error('Error handling typing_start:', error.message);
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Event: typing_stop
+   * User stopped typing in a conversation
+   * 
+   * Flow:
+   * 1. Validate authentication
+   * 2. Validate conversation membership
+   * 3. Broadcast stop signal to room (except sender)
+   * 
+   * Important:
+   * - Ephemeral: NO DATABASE WRITES
+   * - Client should auto-send after timeout (e.g., 3s of inactivity)
+   */
+  @SubscribeMessage('typing_stop')
+  async handleTypingStop(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() payload: TypingStopPayload,
+  ) {
+    try {
+      if (!client.userId) {
+        throw new UnauthorizedException('Not authenticated');
+      }
+
+      const { conversationId } = payload;
+
+      if (!conversationId) {
+        throw new BadRequestException('conversationId is required');
+      }
+
+      // Validate membership (lightweight check)
+      const isMember = await this.conversationsService.validateMembership(
+        conversationId,
+        client.userId,
+      );
+
+      if (!isMember) {
+        throw new ForbiddenException('You are not a member of this conversation');
+      }
+
+      // Broadcast stop to room (except sender)
+      const roomName = `conversation:${conversationId}`;
+      const typingPayload: UserTypingPayload = {
+        conversationId,
+        userId: client.userId,
+        userName: '', // Not needed for stop event
+      };
+
+      client.to(roomName).emit('user_typing_stop', typingPayload);
+
+      console.log(`⌨️  User ${client.userId} stopped typing in ${conversationId}`);
+
+      return {
+        success: true,
+      };
+    } catch (error) {
+      console.error('Error handling typing_stop:', error.message);
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Event: message_delivered
+   * Mark message(s) as delivered for the authenticated user
+   * 
+   * Flow:
+   * 1. Client receives message_received
+   * 2. Client immediately emits message_delivered
+   * 3. Server updates MessageStatus.deliveredAt (idempotent)
+   * 4. Server broadcasts to conversation room
+   * 
+   * Important:
+   * - Idempotent: Don't overwrite existing deliveredAt
+   * - Per-user: Each user has their own delivery status
+   * - Sender gets delivery instantly (handled in send_message)
+   */
+  @SubscribeMessage('message_delivered')
+  async handleMessageDelivered(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() payload: { conversationId: string; messageId: string },
+  ) {
+    try {
+      if (!client.userId) {
+        throw new UnauthorizedException('Not authenticated');
+      }
+
+      const { conversationId, messageId } = payload;
+
+      if (!conversationId || !messageId) {
+        throw new BadRequestException('conversationId and messageId are required');
+      }
+
+      // Validate membership
+      const isMember = await this.conversationsService.validateMembership(
+        conversationId,
+        client.userId,
+      );
+
+      if (!isMember) {
+        throw new ForbiddenException('You are not a member of this conversation');
+      }
+
+      // Update delivery status (idempotent)
+      const now = new Date();
+      await this.prismaService.messageStatus.updateMany({
+        where: {
+          messageId,
+          userId: client.userId,
+          deliveredAt: null, // Only update if not already delivered
+        },
+        data: {
+          deliveredAt: now,
+        },
+      });
+
+      // Broadcast delivery receipt to room
+      const roomName = `conversation:${conversationId}`;
+      const deliveryPayload: MessageDeliveredPayload = {
+        conversationId,
+        messageId,
+        userId: client.userId,
+        deliveredAt: now,
+      };
+
+      this.server.to(roomName).emit('message_delivered', deliveryPayload);
+
+      console.log(`✓ Message ${messageId} delivered to ${client.userId}`);
+
+      return {
+        success: true,
+      };
+    } catch (error) {
+      console.error('Error handling message_delivered:', error.message);
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Event: message_read
+   * Mark message(s) as read for the authenticated user
+   * 
+   * Flow:
+   * 1. User opens conversation or scrolls to message
+   * 2. Client emits message_read with batch of message IDs
+   * 3. Server updates MessageStatus.readAt in transaction
+   * 4. Server broadcasts to conversation room
+   * 
+   * Important:
+   * - Batch updates: Update multiple messages at once
+   * - Transaction: All-or-nothing update
+   * - Idempotent: Don't overwrite existing readAt
+   * - Auto-delivery: Reading implies delivery
+   */
+  @SubscribeMessage('message_read')
+  async handleMessageRead(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() payload: MessageReadPayload,
+  ) {
+    try {
+      if (!client.userId) {
+        throw new UnauthorizedException('Not authenticated');
+      }
+
+      const { conversationId, messageIds } = payload;
+
+      if (!conversationId || !messageIds || messageIds.length === 0) {
+        throw new BadRequestException('conversationId and messageIds are required');
+      }
+
+      // Validate membership
+      const isMember = await this.conversationsService.validateMembership(
+        conversationId,
+        client.userId,
+      );
+
+      if (!isMember) {
+        throw new ForbiddenException('You are not a member of this conversation');
+      }
+
+      // Verify messages belong to this conversation
+      const messages = await this.prismaService.message.findMany({
+        where: {
+          id: { in: messageIds },
+          conversationId,
+        },
+        select: { id: true },
+      });
+
+      if (messages.length === 0) {
+        throw new BadRequestException('No valid messages found');
+      }
+
+      const validMessageIds = messages.map((m) => m.id);
+      const now = new Date();
+
+      // Batch update in transaction
+      // Set both deliveredAt and readAt (reading implies delivery)
+      await this.prismaService.$transaction([
+        // Update delivered (if not already)
+        this.prismaService.messageStatus.updateMany({
+          where: {
+            messageId: { in: validMessageIds },
+            userId: client.userId,
+            deliveredAt: null,
+          },
+          data: {
+            deliveredAt: now,
+          },
+        }),
+        // Update read (if not already)
+        this.prismaService.messageStatus.updateMany({
+          where: {
+            messageId: { in: validMessageIds },
+            userId: client.userId,
+            readAt: null,
+          },
+          data: {
+            readAt: now,
+          },
+        }),
+      ]);
+
+      // Broadcast read receipt to room
+      const roomName = `conversation:${conversationId}`;
+      const readPayload: MessageReadStatusPayload = {
+        conversationId,
+        messageIds: validMessageIds,
+        userId: client.userId,
+        readAt: now,
+      };
+
+      this.server.to(roomName).emit('message_read', readPayload);
+
+      console.log(`✓✓ Messages read by ${client.userId}: ${validMessageIds.length} messages`);
+
+      return {
+        success: true,
+        messagesUpdated: validMessageIds.length,
+      };
+    } catch (error) {
+      console.error('Error handling message_read:', error.message);
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
   }
 }

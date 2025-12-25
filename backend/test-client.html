@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pulse - Socket.io Test Client</title>
+  <title>Pulse - Socket.io Test Client (Phase 3 & 4)</title>
   <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
   <style>
     * {
@@ -145,8 +145,8 @@
 </head>
 <body>
   <div class="container">
-    <h1>⚡ Pulse - Phase 3 Test Client</h1>
-    <p class="subtitle">Real-Time Messaging with Socket.io + Redis Pub/Sub</p>
+    <h1>⚡ Pulse - Phase 3 & 4 Test Client</h1>
+    <p class="subtitle">Real-Time Messaging + Typing Indicators + Read/Delivery Receipts</p>
 
     <!-- Connection Section -->
     <div class="section">
@@ -179,6 +179,21 @@
         </div>
 
         <button onclick="sendMessage()">Send Message</button>
+
+        <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #444;">
+          <h3 style="color: #00ff88; font-size: 14px; margin-bottom: 10px;">Phase 4: UX Signals</h3>
+          
+          <button onclick="startTyping()">Start Typing</button>
+          <button onclick="stopTyping()">Stop Typing</button>
+          
+          <div class="input-group" style="margin-top: 15px;">
+            <label for="message-id">Message ID (for receipts)</label>
+            <input type="text" id="message-id" placeholder="uuid-here">
+          </div>
+          
+          <button onclick="markDelivered()">Mark Delivered ✓</button>
+          <button onclick="markRead()">Mark Read ✓✓</button>
+        </div>
       </div>
 
       <!-- Event Log Section -->
@@ -280,6 +295,22 @@
         log('message_received', data);
       });
 
+      socket.on('user_typing', (data) => {
+        log('user_typing', data);
+      });
+
+      socket.on('user_typing_stop', (data) => {
+        log('user_typing_stop', data);
+      });
+
+      socket.on('message_delivered', (data) => {
+        log('message_delivered', data);
+      });
+
+      socket.on('message_read', (data) => {
+        log('message_read', data);
+      });
+
       socket.on('pong', (data) => {
         log('pong', data);
       });
@@ -361,6 +392,80 @@
 
     function clearLog() {
       document.getElementById('event-log').innerHTML = '<div style="color: #888; text-align: center;">No events yet...</div>';
+    }
+
+    // Phase 4: Typing Indicators + Receipts
+
+    function startTyping() {
+      if (!socket || !socket.connected) {
+        alert('Please connect first');
+        return;
+      }
+
+      const conversationId = document.getElementById('conversation-id').value.trim();
+      if (!conversationId) {
+        alert('Please enter a conversation ID');
+        return;
+      }
+
+      socket.emit('typing_start', { conversationId }, (response) => {
+        log('typing_start', response);
+      });
+    }
+
+    function stopTyping() {
+      if (!socket || !socket.connected) {
+        alert('Please connect first');
+        return;
+      }
+
+      const conversationId = document.getElementById('conversation-id').value.trim();
+      if (!conversationId) {
+        alert('Please enter a conversation ID');
+        return;
+      }
+
+      socket.emit('typing_stop', { conversationId }, (response) => {
+        log('typing_stop', response);
+      });
+    }
+
+    function markDelivered() {
+      if (!socket || !socket.connected) {
+        alert('Please connect first');
+        return;
+      }
+
+      const conversationId = document.getElementById('conversation-id').value.trim();
+      const messageId = document.getElementById('message-id').value.trim();
+
+      if (!conversationId || !messageId) {
+        alert('Please enter conversation ID and message ID');
+        return;
+      }
+
+      socket.emit('message_delivered', { conversationId, messageId }, (response) => {
+        log('message_delivered', response);
+      });
+    }
+
+    function markRead() {
+      if (!socket || !socket.connected) {
+        alert('Please connect first');
+        return;
+      }
+
+      const conversationId = document.getElementById('conversation-id').value.trim();
+      const messageId = document.getElementById('message-id').value.trim();
+
+      if (!conversationId || !messageId) {
+        alert('Please enter conversation ID and message ID');
+        return;
+      }
+
+      socket.emit('message_read', { conversationId, messageIds: [messageId] }, (response) => {
+        log('message_read', response);
+      });
     }
 
     // Keyboard shortcuts

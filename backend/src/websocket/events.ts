@@ -1,4 +1,8 @@
-// Socket.io Event Types for Phase 3: Real-Time Messaging
+// Socket.io Event Types for Phase 3 & 4: Real-Time Messaging + UX Signals
+
+// ============================================
+// Phase 3: Core Messaging Events
+// ============================================
 
 // Client → Server Events
 export interface JoinConversationPayload {
@@ -36,4 +40,43 @@ export interface RedisMessagePayload {
   messageId: string;
   conversationId: string;
   senderId: string;
+}
+
+// ============================================
+// Phase 4: Typing Indicators + Receipts
+// ============================================
+
+// Client → Server Events
+export interface TypingStartPayload {
+  conversationId: string;
+}
+
+export interface TypingStopPayload {
+  conversationId: string;
+}
+
+export interface MessageReadPayload {
+  conversationId: string;
+  messageIds: string[]; // Batch read support
+}
+
+// Server → Client Events
+export interface UserTypingPayload {
+  conversationId: string;
+  userId: string;
+  userName: string;
+}
+
+export interface MessageDeliveredPayload {
+  conversationId: string;
+  messageId: string;
+  userId: string;
+  deliveredAt: Date;
+}
+
+export interface MessageReadStatusPayload {
+  conversationId: string;
+  messageIds: string[];
+  userId: string;
+  readAt: Date;
 }
