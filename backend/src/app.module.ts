@@ -3,6 +3,8 @@ import { AuthModule } from './auth/auth.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
 import { WebsocketModule } from './websocket/websocket.module';
+import { ConversationsModule } from './conversations/conversations.module';
+import { MessagesModule } from './messages/messages.module';
 
 @Module({
   imports: [
@@ -10,6 +12,8 @@ import { WebsocketModule } from './websocket/websocket.module';
     RedisModule,
     AuthModule,
     WebsocketModule,
+    ConversationsModule,
+    MessagesModule,
   ],
 })
 export class AppModule {}
