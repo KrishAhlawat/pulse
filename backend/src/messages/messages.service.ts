@@ -7,7 +7,7 @@ export class MessagesService {
   constructor(private prisma: PrismaService) {}
 
   async send(userId: string, dto: SendMessageDto) {
-    const { conversationId, content, type } = dto;
+    const { conversationId, content, type, mediaUrl, mediaMeta } = dto;
 
     // Validate conversation exists
     const conversation = await this.prisma.conversation.findUnique({
@@ -27,6 +27,13 @@ export class MessagesService {
       throw new ForbiddenException('You are not a member of this conversation');
     }
 
+    // Validate media messages
+    if (type === 'image' || type === 'video') {
+      if (!mediaUrl) {
+        throw new BadRequestException('mediaUrl is required for media messages');
+      }
+    }
+
     // Create message and message statuses in a transaction
     const message = await this.prisma.$transaction(async (tx) => {
       // Create the message
@@ -36,7 +43,9 @@ export class MessagesService {
           senderId: userId,
           content,
           type,
-        },
+          ...(mediaUrl && { mediaUrl }),
+          ...(mediaMeta && { mediaMeta }),
+        } as any,
         include: {
           sender: {
             select: { id: true, name: true, email: true, image: true },
@@ -72,8 +81,10 @@ export class MessagesService {
       senderId: message.senderId,
       content: message.content,
       type: message.type,
+      mediaUrl: (message as any).mediaUrl,
+      mediaMeta: (message as any).mediaMeta,
       createdAt: message.createdAt,
-      sender: message.sender,
+      sender: (message as any).sender,
     };
   }
 

@@ -241,15 +241,25 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
         throw new UnauthorizedException('Not authenticated');
       }
 
-      const { conversationId, content, type } = payload;
+      const { conversationId, content, type, mediaUrl, mediaMeta } = payload;
 
       // Validate payload
-      if (!conversationId || !content || !type) {
-        throw new BadRequestException('conversationId, content, and type are required');
+      if (!conversationId || !type) {
+        throw new BadRequestException('conversationId and type are required');
       }
 
       if (!['text', 'image', 'video'].includes(type)) {
         throw new BadRequestException('type must be text, image, or video');
+      }
+
+      // Validate text messages have content
+      if (type === 'text' && !content) {
+        throw new BadRequestException('content is required for text messages');
+      }
+
+      // Validate media messages have mediaUrl
+      if ((type === 'image' || type === 'video') && !mediaUrl) {
+        throw new BadRequestException('mediaUrl is required for media messages');
       }
 
       // STEP 1: Persist message using Phase 2 service
@@ -258,9 +268,11 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
         conversationId,
         content,
         type,
+        mediaUrl,
+        mediaMeta,
       });
 
-      console.log(`💾 Message persisted: ${message.id} in conversation ${conversationId}`);
+      console.log(`💾 Message persisted: ${message.id} (${type}) in conversation ${conversationId}`);
 
       // STEP 2: Publish to Redis for horizontal scaling
       // All backend instances will receive this and broadcast to their connected clients
@@ -331,8 +343,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
         id: message.id,
         conversationId: message.conversationId,
         senderId: message.senderId,
-        content: message.content || '',
+        content: message.content || undefined,
         type: message.type,
+        mediaUrl: message.mediaUrl || undefined,
+        mediaMeta: message.mediaMeta || undefined,
         createdAt: message.createdAt,
         sender: {
           id: message.sender.id,

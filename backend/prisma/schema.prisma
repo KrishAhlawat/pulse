@@ -98,6 +98,8 @@ model Message {
   senderId       String   @map("sender_id")
   content        String?
   type           String   // "text" | "image" | "video"
+  mediaUrl       String?  @map("media_url")
+  mediaMeta      Json?    @map("media_meta")
   createdAt      DateTime @default(now()) @map("created_at")
 
   conversation Conversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)

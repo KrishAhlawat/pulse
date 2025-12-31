@@ -15,8 +15,17 @@ export interface LeaveConversationPayload {
 
 export interface SendMessagePayload {
   conversationId: string;
-  content: string;
+  content?: string;
   type: 'text' | 'image' | 'video';
+  mediaUrl?: string;
+  mediaMeta?: {
+    fileName?: string;
+    mimeType?: string;
+    fileSize?: number;
+    width?: number;
+    height?: number;
+    duration?: number;
+  };
 }
 
 // Server → Client Events
@@ -24,8 +33,10 @@ export interface MessageReceivedPayload {
   id: string;
   conversationId: string;
   senderId: string;
-  content: string;
+  content?: string;
   type: string;
+  mediaUrl?: string;
+  mediaMeta?: any;
   createdAt: Date;
   sender: {
     id: string;
