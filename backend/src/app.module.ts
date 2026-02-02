@@ -7,12 +7,14 @@ import { ConversationsModule } from './conversations/conversations.module';
 import { MessagesModule } from './messages/messages.module';
 import { SupabaseModule } from './supabase/supabase.module';
 import { MediaModule } from './media/media.module';
+import { QueueModule } from './queue/queue.module';
 
 @Module({
   imports: [
     PrismaModule,
     RedisModule,
     SupabaseModule,
+    QueueModule,
     AuthModule,
     WebsocketModule,
     ConversationsModule,

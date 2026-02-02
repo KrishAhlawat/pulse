@@ -1,10 +1,14 @@
 import { Injectable, ForbiddenException, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SendMessageDto } from './dto/send-message.dto';
+import { NotificationQueue } from '../queue/notification.queue';
 
 @Injectable()
 export class MessagesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private notificationQueue: NotificationQueue,
+  ) {}
 
   async send(userId: string, dto: SendMessageDto) {
     const { conversationId, content, type, mediaUrl, mediaMeta } = dto;
@@ -75,6 +79,19 @@ export class MessagesService {
       return newMessage;
     });
 
+    // Enqueue notification jobs for offline recipients (after persistence and realtime broadcast)
+    // Exclude the sender from notifications
+    const recipients = conversation.members
+      .filter((member) => member.userId !== userId)
+      .map((member) => member.userId);
+
+    // Enqueue notification jobs asynchronously (fire and forget)
+    // This does not block the message send operation
+    this.enqueueNotifications(message.id, conversationId, userId, recipients).catch((err) => {
+      console.error('Failed to enqueue notifications:', err);
+      // Log error but don't fail the message send operation
+    });
+
     return {
       id: message.id,
       conversationId: message.conversationId,
@@ -86,6 +103,29 @@ export class MessagesService {
       createdAt: message.createdAt,
       sender: (message as any).sender,
     };
+  }
+
+  /**
+   * Enqueue notification jobs for each recipient
+   * This runs asynchronously and does not block message sending
+   */
+  private async enqueueNotifications(
+    messageId: string,
+    conversationId: string,
+    senderId: string,
+    recipients: string[],
+  ): Promise<void> {
+    const enqueuePromises = recipients.map((recipientId) =>
+      this.notificationQueue.enqueueNotification({
+        messageId,
+        conversationId,
+        senderId,
+        recipientId,
+      }),
+    );
+
+    await Promise.all(enqueuePromises);
+    console.log(`📬 Enqueued ${recipients.length} notification job(s) for message ${messageId}`);
   }
 
   async findByConversation(
