@@ -1,17 +1,21 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { LoggerService } from '../logger/logger.service';
+import { LOG_CONTEXTS } from '../logger/logger.constants';
 
 @Injectable()
 export class SupabaseService implements OnModuleInit {
   private supabase: SupabaseClient;
   private readonly BUCKET_NAME = 'pulse-media';
 
+  constructor(private readonly logger: LoggerService) {}
+
   onModuleInit() {
     const supabaseUrl = process.env.SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY;
 
     if (!supabaseUrl || !supabaseKey) {
-      console.warn('⚠️  Supabase credentials not configured. Media uploads will not work.');
+      this.logger.warn('Supabase credentials not configured. Media uploads will not work.', LOG_CONTEXTS.MEDIA);
       return;
     }
 
@@ -21,7 +25,7 @@ export class SupabaseService implements OnModuleInit {
       },
     });
 
-    console.log('✅ Supabase Storage client initialized');
+    this.logger.info('Supabase Storage client initialized', LOG_CONTEXTS.MEDIA);
   }
 
   /**
@@ -109,7 +113,7 @@ export class SupabaseService implements OnModuleInit {
       const { data: buckets, error } = await this.supabase.storage.listBuckets();
 
       if (error) {
-        console.error('Failed to list buckets:', error.message);
+        this.logger.error('Failed to list buckets', LOG_CONTEXTS.MEDIA, { error: error.message });
         return;
       }
 
@@ -125,13 +129,13 @@ export class SupabaseService implements OnModuleInit {
         );
 
         if (createError) {
-          console.error('Failed to create bucket:', createError.message);
+          this.logger.error('Failed to create bucket', LOG_CONTEXTS.MEDIA, { error: createError.message });
         } else {
-          console.log(`✅ Created bucket: ${this.BUCKET_NAME}`);
+          this.logger.info(`Created bucket: ${this.BUCKET_NAME}`, LOG_CONTEXTS.MEDIA);
         }
       }
     } catch (error) {
-      console.error('Error ensuring bucket exists:', error.message);
+      this.logger.error('Error ensuring bucket exists', LOG_CONTEXTS.MEDIA, { error: error.message });
     }
   }
 }

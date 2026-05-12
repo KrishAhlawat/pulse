@@ -1,5 +1,8 @@
 import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
 import { RedisService } from '../redis/redis.service';
+import { LoggerService } from '../logger/logger.service';
+import { MetricsService } from '../metrics/metrics.service';
+import { LOG_CONTEXTS } from '../logger/logger.constants';
 import {
   MESSAGE_RATE_LIMIT,
   MESSAGE_RATE_WINDOW,
@@ -32,7 +35,11 @@ export interface RateLimitResult {
 
 @Injectable()
 export class RateLimitService {
-  constructor(private readonly redisService: RedisService) {}
+  constructor(
+    private readonly redisService: RedisService,
+    private readonly logger: LoggerService,
+    private readonly metrics: MetricsService,
+  ) {}
 
   // ============================================
   // Core Rate Limiting (Generic)
@@ -87,7 +94,7 @@ export class RateLimitService {
   async muteUser(userId: string): Promise<void> {
     const key = `${REDIS_KEYS.USER_MUTE}:${userId}`;
     await this.redisService.setWithTTL(key, '1', MUTE_DURATION);
-    console.log(`🔇 User ${userId} muted for ${MUTE_DURATION}s`);
+    this.logger.warn(`User muted for ${MUTE_DURATION}s`, LOG_CONTEXTS.RATE_LIMIT, { userId, duration: MUTE_DURATION });
   }
 
   /**
@@ -104,6 +111,9 @@ export class RateLimitService {
     if (violations === 1) {
       await this.redisService.expire(key, VIOLATION_WINDOW);
     }
+
+    // Track metric
+    this.metrics.rateLimitViolationsTotal.inc();
 
     if (violations >= VIOLATION_THRESHOLD) {
       await this.muteUser(userId);
@@ -147,6 +157,12 @@ export class RateLimitService {
     if (!result.allowed) {
       // Track violation for mute escalation
       await this.trackViolation(userId);
+
+      this.logger.warn('Rate limit exceeded', LOG_CONTEXTS.RATE_LIMIT, {
+        userId,
+        current: result.current,
+        limit: result.limit,
+      });
 
       throw new HttpException(
         {

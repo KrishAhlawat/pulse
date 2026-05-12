@@ -1,5 +1,7 @@
 import { Queue } from 'bullmq';
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { LoggerService } from '../logger/logger.service';
+import { LOG_CONTEXTS } from '../logger/logger.constants';
 
 export interface NotificationJobData {
   messageId: string;
@@ -11,6 +13,8 @@ export interface NotificationJobData {
 @Injectable()
 export class NotificationQueue implements OnModuleInit, OnModuleDestroy {
   private queue: Queue<NotificationJobData>;
+
+  constructor(private readonly logger: LoggerService) {}
 
   async onModuleInit() {
     const redisUrl = process.env.REDIS_URL;
@@ -40,7 +44,7 @@ export class NotificationQueue implements OnModuleInit, OnModuleDestroy {
       },
     });
 
-    console.log('✅ BullMQ notification queue initialized');
+    this.logger.info('BullMQ notification queue initialized', LOG_CONTEXTS.QUEUE);
   }
 
   async onModuleDestroy() {

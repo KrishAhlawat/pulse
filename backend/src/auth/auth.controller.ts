@@ -2,6 +2,8 @@ import { Controller, Post, Get, Body, UseGuards, Request } from '@nestjs/common'
 import { AuthService } from './auth.service';
 import { AuthGuard } from './auth.guard';
 import { IsEmail, IsString, IsOptional } from 'class-validator';
+import { LoggerService } from '../logger/logger.service';
+import { LOG_CONTEXTS } from '../logger/logger.constants';
 
 export class SyncUserDto {
   @IsString()
@@ -20,13 +22,16 @@ export class SyncUserDto {
 
 @Controller('auth')
 export class AuthController {
-  constructor(private authService: AuthService) {}
+  constructor(
+    private authService: AuthService,
+    private readonly logger: LoggerService,
+  ) {}
 
   @Post('sync')
   @UseGuards(AuthGuard)
   async syncUser(@Body() syncUserDto: SyncUserDto) {
     const user = await this.authService.syncUser(syncUserDto);
-    console.log(`User synced: ${user.email}`);
+    this.logger.info('User synced', LOG_CONTEXTS.AUTH, { email: user.email });
     return {
       success: true,
       user: {

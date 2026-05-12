@@ -15,6 +15,9 @@ import { RateLimitService } from '../rate-limit/rate-limit.service';
 import { RedisService } from '../redis/redis.service';
 import { MessagesService } from '../messages/messages.service';
 import { ConversationsService } from '../conversations/conversations.service';
+import { LoggerService } from '../logger/logger.service';
+import { MetricsService } from '../metrics/metrics.service';
+import { LOG_CONTEXTS } from '../logger/logger.constants';
 import {
   JoinConversationPayload,
   LeaveConversationPayload,
@@ -52,6 +55,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     private conversationsService: ConversationsService,
     private prismaService: PrismaService,
     private rateLimitService: RateLimitService,
+    private readonly logger: LoggerService,
+    private readonly metrics: MetricsService,
   ) {}
 
   /**
@@ -59,7 +64,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
    * This ensures all instances can receive and broadcast messages
    */
   afterInit(server: Server) {
-    console.log('🔌 ChatGateway initialized');
+    this.logger.info('ChatGateway initialized', LOG_CONTEXTS.WEBSOCKET);
     
     // Register Redis message handler for cross-instance broadcasting
     this.redisService.onMessage('chat:messages', async (payload: RedisMessagePayload) => {
@@ -75,7 +80,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       const token = client.handshake.auth.token;
 
       if (!token) {
-        console.log('❌ Socket connection rejected: No token provided');
+        this.logger.warn('Socket connection rejected: No token', LOG_CONTEXTS.WEBSOCKET);
         client.disconnect();
         return;
       }
@@ -83,7 +88,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       const user = await this.authService.validateToken(token);
 
       if (!user) {
-        console.log('❌ Socket connection rejected: Invalid token');
+        this.logger.warn('Socket connection rejected: Invalid token', LOG_CONTEXTS.WEBSOCKET);
         client.disconnect();
         return;
       }
@@ -93,7 +98,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       // Set user online in Redis
       await this.redisService.setUserOnline(user.id);
 
-      console.log(`✅ User connected: ${user.id} (${user.email})`);
+      // Track active connections
+      this.metrics.wsConnectionsActive.inc();
+
+      this.logger.info('User connected', LOG_CONTEXTS.WEBSOCKET, { userId: user.id, email: user.email });
       
       // Notify user of successful connection
       client.emit('connected', {
@@ -101,7 +109,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
         message: 'Successfully connected',
       });
     } catch (error) {
-      console.error('Connection error:', error.message);
+      this.logger.error('Connection error', LOG_CONTEXTS.WEBSOCKET, { error: error.message });
       client.disconnect();
     }
   }
@@ -117,10 +125,13 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
         
         // Set user offline in Redis
         await this.redisService.setUserOffline(client.userId);
+
+        // Track active connections
+        this.metrics.wsConnectionsActive.dec();
         
-        console.log(`👋 User disconnected: ${client.userId}`);
+        this.logger.info('User disconnected', LOG_CONTEXTS.WEBSOCKET, { userId: client.userId });
       } catch (error) {
-        console.error('Disconnect error:', error.message);
+        this.logger.error('Disconnect error', LOG_CONTEXTS.WEBSOCKET, { error: error.message, userId: client.userId });
       }
     }
   }
@@ -161,7 +172,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       const roomName = `conversation:${conversationId}`;
       await client.join(roomName);
 
-      console.log(`👥 User ${client.userId} joined room ${roomName}`);
+      this.logger.debug('User joined room', LOG_CONTEXTS.WEBSOCKET, { userId: client.userId, room: roomName });
 
       return {
         success: true,
@@ -169,7 +180,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
         conversationId,
       };
     } catch (error) {
-      console.error('Error joining conversation:', error.message);
+      this.logger.error('Error joining conversation', LOG_CONTEXTS.WEBSOCKET, { error: error.message, userId: client.userId });
       return {
         success: false,
         error: error.message,
@@ -201,7 +212,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       const roomName = `conversation:${conversationId}`;
       await client.leave(roomName);
 
-      console.log(`👋 User ${client.userId} left room ${roomName}`);
+      this.logger.debug('User left room', LOG_CONTEXTS.WEBSOCKET, { userId: client.userId, room: roomName });
 
       return {
         success: true,
@@ -209,7 +220,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
         conversationId,
       };
     } catch (error) {
-      console.error('Error leaving conversation:', error.message);
+      this.logger.error('Error leaving conversation', LOG_CONTEXTS.WEBSOCKET, { error: error.message, userId: client.userId });
       return {
         success: false,
         error: error.message,
@@ -289,7 +300,15 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
         mediaMeta,
       });
 
-      console.log(`💾 Message persisted: ${message.id} (${type}) in conversation ${conversationId}`);
+      this.logger.info('Message persisted', LOG_CONTEXTS.WEBSOCKET, {
+        messageId: message.id,
+        type,
+        conversationId,
+        userId: client.userId,
+      });
+
+      // Track WebSocket message metric
+      this.metrics.wsMessagesTotal.inc({ event: 'send_message' });
 
       // STEP 2: Publish to Redis for horizontal scaling
       // All backend instances will receive this and broadcast to their connected clients
@@ -301,7 +320,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
 
       await this.redisService.publishMessage(redisPayload);
 
-      console.log(`📡 Message published to Redis: ${message.id}`);
+      this.logger.debug('Message published to Redis', LOG_CONTEXTS.WEBSOCKET, { messageId: message.id });
 
       // Return success to sender
       return {
@@ -310,7 +329,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
         messageId: message.id,
       };
     } catch (error) {
-      console.error('Error sending message:', error.message);
+      this.logger.error('Error sending message', LOG_CONTEXTS.WEBSOCKET, { error: error.message, userId: client.userId });
+      this.metrics.wsErrorsTotal.inc();
       return {
         success: false,
         error: error.message,
@@ -333,7 +353,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     try {
       const { messageId, conversationId, senderId } = payload;
 
-      console.log(`📨 Received Redis message: ${messageId} for conversation ${conversationId}`);
+      this.logger.debug('Received Redis message', LOG_CONTEXTS.WEBSOCKET, { messageId, conversationId });
 
       // Fetch full message from database (source of truth)
       const message = await this.prismaService.message.findUnique({
@@ -351,7 +371,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       });
 
       if (!message) {
-        console.error(`Message ${messageId} not found in database`);
+        this.logger.error('Message not found in database', LOG_CONTEXTS.WEBSOCKET, { messageId });
         return;
       }
 
@@ -377,9 +397,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       const roomName = `conversation:${conversationId}`;
       this.server.to(roomName).emit('message_received', clientPayload);
 
-      console.log(`📢 Broadcasted message ${messageId} to room ${roomName}`);
+      this.logger.debug('Broadcasted message to room', LOG_CONTEXTS.WEBSOCKET, { messageId, room: roomName });
     } catch (error) {
-      console.error('Error handling Redis message:', error);
+      this.logger.error('Error handling Redis message', LOG_CONTEXTS.WEBSOCKET, { error: error.message });
     }
   }
 
@@ -468,13 +488,13 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
 
       client.to(roomName).emit('user_typing', typingPayload);
 
-      console.log(`⌨️  User ${client.userId} typing in ${conversationId}`);
+      this.metrics.wsMessagesTotal.inc({ event: 'typing_start' });
 
       return {
         success: true,
       };
     } catch (error) {
-      console.error('Error handling typing_start:', error.message);
+      this.logger.error('Error handling typing_start', LOG_CONTEXTS.WEBSOCKET, { error: error.message, userId: client.userId });
       return {
         success: false,
         error: error.message,
@@ -531,13 +551,11 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
 
       client.to(roomName).emit('user_typing_stop', typingPayload);
 
-      console.log(`⌨️  User ${client.userId} stopped typing in ${conversationId}`);
-
       return {
         success: true,
       };
     } catch (error) {
-      console.error('Error handling typing_stop:', error.message);
+      this.logger.error('Error handling typing_stop', LOG_CONTEXTS.WEBSOCKET, { error: error.message, userId: client.userId });
       return {
         success: false,
         error: error.message,
@@ -610,13 +628,13 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
 
       this.server.to(roomName).emit('message_delivered', deliveryPayload);
 
-      console.log(`✓ Message ${messageId} delivered to ${client.userId}`);
+      this.logger.debug('Message delivered', LOG_CONTEXTS.WEBSOCKET, { messageId, userId: client.userId });
 
       return {
         success: true,
       };
     } catch (error) {
-      console.error('Error handling message_delivered:', error.message);
+      this.logger.error('Error handling message_delivered', LOG_CONTEXTS.WEBSOCKET, { error: error.message, userId: client.userId });
       return {
         success: false,
         error: error.message,
@@ -720,14 +738,18 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
 
       this.server.to(roomName).emit('message_read', readPayload);
 
-      console.log(`✓✓ Messages read by ${client.userId}: ${validMessageIds.length} messages`);
+      this.logger.debug('Messages read', LOG_CONTEXTS.WEBSOCKET, {
+        userId: client.userId,
+        count: validMessageIds.length,
+        conversationId,
+      });
 
       return {
         success: true,
         messagesUpdated: validMessageIds.length,
       };
     } catch (error) {
-      console.error('Error handling message_read:', error.message);
+      this.logger.error('Error handling message_read', LOG_CONTEXTS.WEBSOCKET, { error: error.message, userId: client.userId });
       return {
         success: false,
         error: error.message,

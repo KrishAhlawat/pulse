@@ -1,6 +1,8 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { createClient, RedisClientType } from 'redis';
 import { RedisMessagePayload } from '../websocket/events';
+import { LoggerService } from '../logger/logger.service';
+import { LOG_CONTEXTS } from '../logger/logger.constants';
 
 @Injectable()
 export class RedisService implements OnModuleInit, OnModuleDestroy {
@@ -8,6 +10,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   private publisher: RedisClientType;
   private subscriber: RedisClientType;
   private messageHandlers: Map<string, (payload: RedisMessagePayload) => void> = new Map();
+
+  constructor(private readonly logger: LoggerService) {}
 
   async onModuleInit() {
     // Support both URL-based (cloud) and host/port (local) Redis configurations
@@ -24,17 +28,17 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
     // Main client for presence
     this.client = createRedisClient() as any;
-    this.client.on('error', (err) => console.error('Redis Client Error', err));
+    this.client.on('error', (err) => this.logger.error('Redis Client Error', LOG_CONTEXTS.REDIS, { error: err.message }));
     await this.client.connect();
 
     // Publisher client for Pub/Sub
     this.publisher = createRedisClient() as any;
-    this.publisher.on('error', (err) => console.error('Redis Publisher Error', err));
+    this.publisher.on('error', (err) => this.logger.error('Redis Publisher Error', LOG_CONTEXTS.REDIS, { error: err.message }));
     await this.publisher.connect();
 
     // Subscriber client for Pub/Sub
     this.subscriber = createRedisClient() as any;
-    this.subscriber.on('error', (err) => console.error('Redis Subscriber Error', err));
+    this.subscriber.on('error', (err) => this.logger.error('Redis Subscriber Error', LOG_CONTEXTS.REDIS, { error: err.message }));
     await this.subscriber.connect();
 
     // Subscribe to chat messages channel
@@ -46,11 +50,11 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
           handler(payload);
         }
       } catch (error) {
-        console.error('Error processing Redis message:', error);
+        this.logger.error('Error processing Redis message', LOG_CONTEXTS.REDIS, { error: error.message });
       }
     });
 
-    console.log('✅ Redis connected (with Pub/Sub)');
+    this.logger.info('Redis connected (with Pub/Sub)', LOG_CONTEXTS.REDIS);
   }
 
   async onModuleDestroy() {
@@ -150,5 +154,17 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
    */
   async del(key: string): Promise<void> {
     await this.client.del(key);
+  }
+
+  /**
+   * Ping Redis to check connectivity. Used by health checks.
+   */
+  async ping(): Promise<boolean> {
+    try {
+      const result = await this.client.ping();
+      return result === 'PONG';
+    } catch {
+      return false;
+    }
   }
 }

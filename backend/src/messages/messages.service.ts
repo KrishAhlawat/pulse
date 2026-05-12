@@ -3,6 +3,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SendMessageDto } from './dto/send-message.dto';
 import { NotificationQueue } from '../queue/notification.queue';
 import { RateLimitService } from '../rate-limit/rate-limit.service';
+import { LoggerService } from '../logger/logger.service';
+import { MetricsService } from '../metrics/metrics.service';
+import { LOG_CONTEXTS } from '../logger/logger.constants';
 
 @Injectable()
 export class MessagesService {
@@ -10,6 +13,8 @@ export class MessagesService {
     private prisma: PrismaService,
     private notificationQueue: NotificationQueue,
     private rateLimitService: RateLimitService,
+    private readonly logger: LoggerService,
+    private readonly metrics: MetricsService,
   ) {}
 
   async send(userId: string, dto: SendMessageDto) {
@@ -85,6 +90,9 @@ export class MessagesService {
       return newMessage;
     });
 
+    // Track message metric
+    this.metrics.messagesSentTotal.inc();
+
     // Enqueue notification jobs for offline recipients (after persistence and realtime broadcast)
     // Exclude the sender from notifications
     const recipients = conversation.members
@@ -94,7 +102,7 @@ export class MessagesService {
     // Enqueue notification jobs asynchronously (fire and forget)
     // This does not block the message send operation
     this.enqueueNotifications(message.id, conversationId, userId, recipients).catch((err) => {
-      console.error('Failed to enqueue notifications:', err);
+      this.logger.error('Failed to enqueue notifications', LOG_CONTEXTS.MESSAGES, { error: err.message, messageId: message.id });
       // Log error but don't fail the message send operation
     });
 
@@ -131,7 +139,7 @@ export class MessagesService {
     );
 
     await Promise.all(enqueuePromises);
-    console.log(`📬 Enqueued ${recipients.length} notification job(s) for message ${messageId}`);
+    this.logger.debug(`Enqueued ${recipients.length} notification job(s)`, LOG_CONTEXTS.MESSAGES, { messageId, recipientCount: recipients.length });
   }
 
   async findByConversation(

@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { LoggerService } from '../logger/logger.service';
+import { LOG_CONTEXTS } from '../logger/logger.constants';
 import * as jwt from 'jsonwebtoken';
 
 export interface JwtPayload {
@@ -17,7 +19,10 @@ export interface AuthUser {
 
 @Injectable()
 export class AuthService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly logger: LoggerService,
+  ) {}
 
   async validateToken(token: string): Promise<AuthUser | null> {
     try {
@@ -39,7 +44,7 @@ export class AuthService {
         image: user.image || undefined,
       };
     } catch (error) {
-      console.error('Token validation error:', error.message);
+      this.logger.error('Token validation error', LOG_CONTEXTS.AUTH, { error: error.message });
       return null;
     }
   }
