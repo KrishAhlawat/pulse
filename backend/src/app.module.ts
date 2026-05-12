@@ -8,6 +8,7 @@ import { MessagesModule } from './messages/messages.module';
 import { SupabaseModule } from './supabase/supabase.module';
 import { MediaModule } from './media/media.module';
 import { QueueModule } from './queue/queue.module';
+import { RateLimitModule } from './rate-limit/rate-limit.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { QueueModule } from './queue/queue.module';
     RedisModule,
     SupabaseModule,
     QueueModule,
+    RateLimitModule,
     AuthModule,
     WebsocketModule,
     ConversationsModule,

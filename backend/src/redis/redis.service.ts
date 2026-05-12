@@ -102,4 +102,53 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   onMessage(channel: string, handler: (payload: RedisMessagePayload) => void): void {
     this.messageHandlers.set(channel, handler);
   }
+
+  // ============================================
+  // Generic Redis Utility Methods
+  // Phase 7: Used by RateLimitService
+  // ============================================
+
+  /**
+   * Atomically increment a key's value by 1.
+   * If the key does not exist, it is created with value 1.
+   */
+  async incr(key: string): Promise<number> {
+    return this.client.incr(key);
+  }
+
+  /**
+   * Set a TTL (time-to-live) on an existing key.
+   */
+  async expire(key: string, seconds: number): Promise<void> {
+    await this.client.expire(key, seconds);
+  }
+
+  /**
+   * Get the string value of a key. Returns null if the key does not exist.
+   */
+  async get(key: string): Promise<string | null> {
+    return this.client.get(key);
+  }
+
+  /**
+   * Set a key to a string value with a TTL in seconds.
+   */
+  async setWithTTL(key: string, value: string, ttlSeconds: number): Promise<void> {
+    await this.client.set(key, value, { EX: ttlSeconds });
+  }
+
+  /**
+   * Check whether a key exists in Redis.
+   */
+  async exists(key: string): Promise<boolean> {
+    const result = await this.client.exists(key);
+    return result === 1;
+  }
+
+  /**
+   * Delete a key from Redis.
+   */
+  async del(key: string): Promise<void> {
+    await this.client.del(key);
+  }
 }

@@ -2,6 +2,7 @@ import { Controller, Get, Post, Body, Param, Query, UseGuards, Request, ParseInt
 import { MessagesService } from './messages.service';
 import { SendMessageDto } from './dto/send-message.dto';
 import { AuthGuard } from '../auth/auth.guard';
+import { RateLimitGuard } from '../rate-limit/rate-limit.guard';
 
 @Controller('messages')
 @UseGuards(AuthGuard)
@@ -9,6 +10,7 @@ export class MessagesController {
   constructor(private readonly messagesService: MessagesService) {}
 
   @Post()
+  @UseGuards(AuthGuard, RateLimitGuard)
   send(@Request() req: any, @Body() sendMessageDto: SendMessageDto) {
     return this.messagesService.send(req.user.sub, sendMessageDto);
   }

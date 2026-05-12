@@ -2,15 +2,21 @@ import { Injectable, ForbiddenException, BadRequestException, NotFoundException 
 import { PrismaService } from '../prisma/prisma.service';
 import { SendMessageDto } from './dto/send-message.dto';
 import { NotificationQueue } from '../queue/notification.queue';
+import { RateLimitService } from '../rate-limit/rate-limit.service';
 
 @Injectable()
 export class MessagesService {
   constructor(
     private prisma: PrismaService,
     private notificationQueue: NotificationQueue,
+    private rateLimitService: RateLimitService,
   ) {}
 
   async send(userId: string, dto: SendMessageDto) {
+    // Phase 7: Rate limit check (runs before any DB queries)
+    // Throws HttpException(429) if user is muted or over the limit
+    await this.rateLimitService.checkMessageRateLimit(userId);
+
     const { conversationId, content, type, mediaUrl, mediaMeta } = dto;
 
     // Validate conversation exists

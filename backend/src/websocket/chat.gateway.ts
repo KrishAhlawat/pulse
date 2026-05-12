@@ -11,6 +11,7 @@ import {
 import { Server, Socket } from 'socket.io';
 import { Injectable, UnauthorizedException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { AuthService } from '../auth/auth.service';
+import { RateLimitService } from '../rate-limit/rate-limit.service';
 import { RedisService } from '../redis/redis.service';
 import { MessagesService } from '../messages/messages.service';
 import { ConversationsService } from '../conversations/conversations.service';
@@ -50,6 +51,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     private messagesService: MessagesService,
     private conversationsService: ConversationsService,
     private prismaService: PrismaService,
+    private rateLimitService: RateLimitService,
   ) {}
 
   /**
@@ -241,6 +243,21 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
         throw new UnauthorizedException('Not authenticated');
       }
 
+      // Phase 7: Rate limit check before processing
+      try {
+        await this.rateLimitService.checkMessageRateLimit(client.userId);
+      } catch (rateLimitError) {
+        client.emit('rate_limit_error', {
+          type: 'message',
+          message: rateLimitError.message || 'Rate limit exceeded',
+          retryAfter: 60,
+        });
+        return {
+          success: false,
+          error: rateLimitError.message || 'Rate limit exceeded',
+        };
+      }
+
       const { conversationId, content, type, mediaUrl, mediaMeta } = payload;
 
       // Validate payload
@@ -411,6 +428,12 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     try {
       if (!client.userId) {
         throw new UnauthorizedException('Not authenticated');
+      }
+
+      // Phase 7: Typing event throttle (silent rejection)
+      const typingAllowed = await this.rateLimitService.checkTypingRateLimit(client.userId);
+      if (!typingAllowed) {
+        return { success: false, error: 'Typing throttled' };
       }
 
       const { conversationId } = payload;
